@@ -49,7 +49,7 @@ class MovieDetailSchema(BaseModel):
     status: str
     budget: float
     revenue: float
-    country: Optional[CountrySchema]
+    country: CountrySchema
     genres: list[GenreSchema]
     actors: list[ActorSchema]
     languages: list[LanguageSchema]
