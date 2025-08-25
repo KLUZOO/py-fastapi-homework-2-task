@@ -6,10 +6,11 @@ from database.models import MovieStatusEnum, CountryModel
 
 from typing import Optional
 
+
 class CountrySchema(BaseModel):
     id: int
     code: str
-    name: str
+    name: str | None
 
     class Config:
         from_attributes = True
@@ -48,10 +49,10 @@ class MovieDetailSchema(BaseModel):
     status: str
     budget: float
     revenue: float
-    country: Optional[CountrySchema] = None
-    genre: Optional[list[str]] = []
-    actor: Optional[list[str]] = []
-    language: Optional[list[str]] = []
+    country: Optional[CountrySchema]
+    genres: list[GenreSchema]
+    actors: list[ActorSchema]
+    languages: list[LanguageSchema]
 
     class Config:
         from_attributes = True

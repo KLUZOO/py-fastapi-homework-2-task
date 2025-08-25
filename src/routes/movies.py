@@ -55,5 +55,5 @@ async def get_movie(movie_id: int, db: AsyncSession = Depends(get_db)):
     ))
     movie = result.scalar_one_or_none()
     if not movie:
-        raise HTTPException(status_code=404, detail="Film not found")
+        raise HTTPException(status_code=404, detail="Movie not found")
     return movie
