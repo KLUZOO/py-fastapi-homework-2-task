@@ -3,6 +3,8 @@ import datetime
 from pydantic import BaseModel
 
 from database.models import MovieStatusEnum, CountryModel
+from pydantic import BaseModel, Field, validator
+from typing import Literal
 
 from typing import Optional, List
 
@@ -46,7 +48,7 @@ class MovieDetailSchema(BaseModel):
     date: datetime.date
     score: float
     overview: str
-    status: str
+    status: Literal["Released", "Post Production", "In Production"]
     budget: float
     revenue: float
     country: CountrySchema
@@ -81,17 +83,29 @@ class MovieListResponseSchema(BaseModel):
 
 
 class MovieCreateSchema(BaseModel):
-    name: str
+    name: str = Field(..., max_length=255)
     date: datetime.date
-    score: float
-    overview: str
+    score: float = Field(..., ge=0, le=100)
+    overview: str | None
     status: str
-    budget: float
-    revenue: float
+    budget: int = Field(..., ge=0)
+    revenue: int = Field(..., ge=0)
     country: str
     genres: list[str]
     actors: list[str]
     languages: list[str]
+
+    @validator("date")
+    def date_not_too_far(cls, v: datetime.date):
+        if v > datetime.date.today() + datetime.timedelta(days=365):
+            raise ValueError("Date cannot be more than 1 year in the future")
+        return v
+
+    @validator("*", pre=True, always=True)
+    def catch_invalid_input(cls, v, values, **kwargs):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("Invalid input data.")
+        return v
 
 
 class MoviePatchSchema(BaseModel):
@@ -102,7 +116,21 @@ class MoviePatchSchema(BaseModel):
     status: Optional[str] = None
     budget: Optional[float] = None
     revenue: Optional[float] = None
-    country: Optional[str] = None
-    genres: Optional[List[str]] = None
-    actors: Optional[List[str]] = None
-    languages: Optional[List[str]] = None
+
+    @validator("date")
+    def date_not_too_far(cls, v):
+        if v and v > datetime.date.today() + datetime.timedelta(days=365):
+            raise ValueError("Date cannot be more than 1 year in the future")
+        return v
+
+    @validator("score")
+    def score_valid(cls, v):
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("Score must be between 0 and 100")
+        return v
+
+    @validator("budget", "revenue")
+    def non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("Value cannot be negative")
+        return v

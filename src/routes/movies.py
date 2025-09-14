@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -77,62 +79,40 @@ async def remove_movie(movie_id: int, db: AsyncSession = Depends(get_db)):
     return None
 
 
-@router.post("/movies/", status_code=status.HTTP_201_CREATED)
+@router.post("/movies/", status_code=status.HTTP_201_CREATED, response_model=MovieDetailSchema)
 async def create_movie(movie: MovieCreateSchema, db: AsyncSession = Depends(get_db)):
     # --- Перевірка дубліката ---
     result = await db.execute(
-        select(MovieModel).where(
-            MovieModel.name == movie.name,
-            MovieModel.date == movie.date
-        )
+        select(MovieModel).options(
+            selectinload(MovieModel.genres),
+            selectinload(MovieModel.actors),
+            selectinload(MovieModel.languages),
+            selectinload(MovieModel.country),
+        ).where(MovieModel.name == movie.name, MovieModel.date == movie.date)
     )
-    existing_movie = result.scalar_one_or_none()
-    if existing_movie:
+    if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A movie with the name '{movie.name}' and release date '{movie.date}' already exists."
         )
 
-    # --- Country (ISO 3166-1 alpha-3) ---
-    result = await db.execute(select(CountryModel).where(CountryModel.code == movie.country))
-    country = result.scalar_one_or_none()
+    # --- Country ---
+    country = (await db.execute(select(CountryModel).where(CountryModel.code == movie.country))).scalar_one_or_none()
     if not country:
-        country = CountryModel(code=movie.country, name=movie.country)
+        country = CountryModel(code=movie.country)
         db.add(country)
-        await db.flush()
 
-    # --- Genres ---
-    genres = []
-    for g in movie.genres:
-        result = await db.execute(select(GenreModel).where(GenreModel.name == g))
-        genre = result.scalar_one_or_none()
-        if not genre:
-            genre = GenreModel(name=g)
-            db.add(genre)
-            await db.flush()
-        genres.append(genre)
+    # --- Genres, Actors, Languages ---
+    async def get_or_create(model, name):
+        obj = (await db.execute(select(model).where(model.name == name))).scalar_one_or_none()
+        if not obj:
+            obj = model(name=name)
+            db.add(obj)
+        return obj
 
-    # --- Actors ---
-    actors = []
-    for a in movie.actors:
-        result = await db.execute(select(ActorModel).where(ActorModel.name == a))
-        actor = result.scalar_one_or_none()
-        if not actor:
-            actor = ActorModel(name=a)
-            db.add(actor)
-            await db.flush()
-        actors.append(actor)
-
-    # --- Languages ---
-    languages = []
-    for lng in movie.languages:
-        result = await db.execute(select(LanguageModel).where(LanguageModel.name == lng))
-        language = result.scalar_one_or_none()
-        if not language:
-            language = LanguageModel(name=lng)
-            db.add(language)
-            await db.flush()
-        languages.append(language)
+    genres = [await get_or_create(GenreModel, g) for g in movie.genres]
+    actors = [await get_or_create(ActorModel, a) for a in movie.actors]
+    languages = [await get_or_create(LanguageModel, lng) for lng in movie.languages]
 
     # --- Movie ---
     db_movie = MovieModel(
@@ -146,12 +126,24 @@ async def create_movie(movie: MovieCreateSchema, db: AsyncSession = Depends(get_
         country=country,
         genres=genres,
         actors=actors,
-        languages=languages,
+        languages=languages
     )
 
     db.add(db_movie)
+    await db.flush()  # один раз перед commit
     await db.commit()
     await db.refresh(db_movie)
+
+    db_movie = (await db.execute(
+        select(MovieModel)
+        .options(
+            selectinload(MovieModel.genres),
+            selectinload(MovieModel.actors),
+            selectinload(MovieModel.languages),
+            selectinload(MovieModel.country)
+        )
+        .where(MovieModel.id == db_movie.id)
+    )).scalar_one()
 
     return {
         "id": db_movie.id,
@@ -159,10 +151,17 @@ async def create_movie(movie: MovieCreateSchema, db: AsyncSession = Depends(get_
         "date": db_movie.date,
         "score": db_movie.score,
         "overview": db_movie.overview,
-        "country": country.code,  # повертаємо ISO-код
-        "genres": [g.name for g in genres],
-        "actors": [a.name for a in actors],
-        "languages": [lng.name for lng in languages],
+        "status": db_movie.status,
+        "budget": db_movie.budget,
+        "revenue": db_movie.revenue,
+        "country": {
+            "id": db_movie.country.id,
+            "code": db_movie.country.code,
+            "name": db_movie.country.name
+        } if db_movie.country else None,
+        "genres": [{"id": gnr.id, "name": gnr.name} for gnr in db_movie.genres],
+        "actors": [{"id": act.id, "name": act.name} for act in db_movie.actors],
+        "languages": [{"id": lng.id, "name": lng.name} for lng in db_movie.languages],
     }
 
 
@@ -187,61 +186,28 @@ async def update_movie(
     # --- Оновлення простих полів ---
     for field, value in movie_update.dict(exclude_unset=True).items():
         if field in ["name", "date", "score", "overview", "status", "budget", "revenue"]:
+            # --- Валідація ---
+            if field == "score" and not (0 <= value <= 100):
+                raise HTTPException(status_code=400, detail={"detail": "Invalid input data."})
+            if field in ["budget", "revenue"] and value < 0:
+                raise HTTPException(status_code=400, detail={"detail": "Invalid input data."})
+            if field == "date" and value > date.today() + timedelta(days=365):
+                raise HTTPException(status_code=400, detail={"detail": "Invalid input data."})
+
             setattr(db_movie, field, value)
 
-    # --- Country ---
-    if movie_update.country:
-        result = await db.execute(
-            select(CountryModel).where(CountryModel.code == movie_update.country.code)
-        )
-        country = result.scalar_one_or_none()
-        if not country:
-            country = CountryModel(
-                code=movie_update.country.code,
-                name=movie_update.country.name or movie_update.country.code
-            )
-            db.add(country)
-            await db.flush()
-        db_movie.country = country
+    # --- Оновлення простих полів ---
+    for field, value in movie_update.dict(exclude_unset=True).items():
+        if field in ["name", "date", "score", "overview", "status", "budget", "revenue"]:
+            # --- Валідація ---
+            if field == "score" and not (0 <= value <= 100):
+                raise HTTPException(status_code=400, detail={"detail": "Invalid input data."})
+            if field in ["budget", "revenue"] and value < 0:
+                raise HTTPException(status_code=400, detail={"detail": "Invalid input data."})
+            if field == "date" and value > date.today() + timedelta(days=365):
+                raise HTTPException(status_code=400, detail={"detail": "Invalid input data."})
 
-    # --- Genres ---
-    if movie_update.genres is not None:
-        genres = []
-        for g in movie_update.genres:
-            result = await db.execute(select(GenreModel).where(GenreModel.name == g.name))
-            genre = result.scalar_one_or_none()
-            if not genre:
-                genre = GenreModel(name=g.name)
-                db.add(genre)
-                await db.flush()
-            genres.append(genre)
-        db_movie.genres = genres
-
-    # --- Actors ---
-    if movie_update.actors is not None:
-        actors = []
-        for a in movie_update.actors:
-            result = await db.execute(select(ActorModel).where(ActorModel.name == a.name))
-            actor = result.scalar_one_or_none()
-            if not actor:
-                actor = ActorModel(name=a.name)
-                db.add(actor)
-                await db.flush()
-            actors.append(actor)
-        db_movie.actors = actors
-
-    # --- Languages ---
-    if movie_update.languages is not None:
-        languages = []
-        for lng in movie_update.languages:
-            result = await db.execute(select(LanguageModel).where(LanguageModel.name == lng.name))
-            language = result.scalar_one_or_none()
-            if not language:
-                language = LanguageModel(name=lng.name)
-                db.add(language)
-                await db.flush()
-            languages.append(language)
-        db_movie.languages = languages
+            setattr(db_movie, field, value)
 
     await db.commit()
     await db.refresh(db_movie)
@@ -251,9 +217,11 @@ async def update_movie(
         "movie": {
             "id": db_movie.id,
             "name": db_movie.name,
-            "country": db_movie.country.code if db_movie.country else None,
-            "genres": [g.name for g in db_movie.genres],
-            "actors": [a.name for a in db_movie.actors],
-            "languages": [lng.name for lng in db_movie.languages],
+            "date": db_movie.date,
+            "score": db_movie.score,
+            "overview": db_movie.overview,
+            "status": db_movie.status,
+            "budget": db_movie.budget,
+            "revenue": db_movie.revenue
         }
     }
