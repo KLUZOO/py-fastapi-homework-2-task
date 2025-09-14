@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from database.models import MovieStatusEnum, CountryModel
 
-from typing import Optional
+from typing import Optional, List
 
 
 class CountrySchema(BaseModel):
@@ -79,6 +79,7 @@ class MovieListResponseSchema(BaseModel):
     class Config:
         from_attributes = True
 
+
 class MovieCreateSchema(BaseModel):
     name: str
     date: datetime.date
@@ -91,3 +92,17 @@ class MovieCreateSchema(BaseModel):
     genres: list[str]
     actors: list[str]
     languages: list[str]
+
+
+class MoviePatchSchema(BaseModel):
+    name: Optional[str] = None
+    date: Optional[datetime.date] = None
+    score: Optional[float] = None
+    overview: Optional[str] = None
+    status: Optional[str] = None
+    budget: Optional[float] = None
+    revenue: Optional[float] = None
+    country: Optional[str] = None
+    genres: Optional[List[str]] = None
+    actors: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
