@@ -125,11 +125,11 @@ async def create_movie(movie: MovieCreateSchema, db: AsyncSession = Depends(get_
 
     # --- Languages ---
     languages = []
-    for l in movie.languages:
-        result = await db.execute(select(LanguageModel).where(LanguageModel.name == l))
+    for lng in movie.languages:
+        result = await db.execute(select(LanguageModel).where(LanguageModel.name == lng))
         language = result.scalar_one_or_none()
         if not language:
-            language = LanguageModel(name=l)
+            language = LanguageModel(name=lng)
             db.add(language)
             await db.flush()
         languages.append(language)
@@ -162,7 +162,7 @@ async def create_movie(movie: MovieCreateSchema, db: AsyncSession = Depends(get_
         "country": country.code,  # повертаємо ISO-код
         "genres": [g.name for g in genres],
         "actors": [a.name for a in actors],
-        "languages": [l.name for l in languages],
+        "languages": [lng.name for lng in languages],
     }
 
 
@@ -233,11 +233,11 @@ async def update_movie(
     # --- Languages ---
     if movie_update.languages is not None:
         languages = []
-        for l in movie_update.languages:
-            result = await db.execute(select(LanguageModel).where(LanguageModel.name == l.name))
+        for lng in movie_update.languages:
+            result = await db.execute(select(LanguageModel).where(LanguageModel.name == lng.name))
             language = result.scalar_one_or_none()
             if not language:
-                language = LanguageModel(name=l.name)
+                language = LanguageModel(name=lng.name)
                 db.add(language)
                 await db.flush()
             languages.append(language)
@@ -254,6 +254,6 @@ async def update_movie(
             "country": db_movie.country.code if db_movie.country else None,
             "genres": [g.name for g in db_movie.genres],
             "actors": [a.name for a in db_movie.actors],
-            "languages": [l.name for l in db_movie.languages],
+            "languages": [lng.name for lng in db_movie.languages],
         }
     }
