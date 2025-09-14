@@ -1,7 +1,5 @@
 import datetime
 
-from pydantic import BaseModel
-
 from database.models import MovieStatusEnum, CountryModel
 from pydantic import BaseModel, Field, validator
 from typing import Literal
